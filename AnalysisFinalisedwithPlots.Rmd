@@ -27,8 +27,6 @@ Here we define success as brood success (i.e., Brood mass > 0g). Note that we sw
 
 #### First we plot raw survival proportions:
 
-I've split by Block as this becomes slightly significant later.
-
 ```{r, echo=F}
 
 load("data0.RData")
