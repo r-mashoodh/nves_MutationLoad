@@ -1,0 +1,310 @@
+---
+title: "Mutation Load"
+author: "R. Mashoodh"
+date: "2023-04-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(survival)
+library(survminer)
+#library(patchwork)
+#library(kableExtra)
+library(gtsummary)
+library(lme4)
+library(lmerTest)
+
+```
+
+## Data wrangling
+
+```{r}
+load("data0.RData")
+
+data0<- data0 %>% 
+  mutate(LineageID = paste(Male,Female,Breeding,Pop,sep="_")) %>% 
+  rename(Evolved = Cond1,
+         CurrentEnv = Cond2) %>% 
+  mutate(Cond = paste(Evolved, CurrentEnv, sep=""))
+
+gen2 <- data0 %>% 
+  filter(Gen == "2")
+
+gen1 <- data0 %>% 
+  filter(Gen == 1) %>% 
+  mutate(survival = ifelse(Total.weight > 0, 1, 0), #Brood success
+         survival2 = ifelse(LineageID %in% gen2$LineageID, 1, 0), #Defining survival as lineage
+         Line = substr(Pop, 1, 2),
+         Family = paste(Line, Pair, sep="_")) 
+```
+
+
+
+## Table 1
+
+accelerated failure time hazard model for inbreeding across all generations
+
+```{r}
+## get data inn
+in.dat <- data0 %>% 
+  filter(Breeding == "in") %>% 
+  group_by(LineageID) %>% 
+  filter(Gen == max(Gen))
+
+in.dat$sr <- 1
+
+## carcass and block are not sig -- drop?
+
+ll.in <- survreg(Surv(Gen, sr) ~ Evolved*CurrentEnv + Block + Carcass.weight, 
+                              data=in.dat, dist = "loglogistic")
+
+
+summary(ll.in)
+
+tbl_regression(ll.in) %>%
+  as_flex_table() %>% 
+  flextable::save_as_docx(., path = "loglogistic_surv.docx")
+
+
+
+### separate the care envs
+
+ll.in.NC <- survreg(Surv(Gen, sr) ~ Evolved + Block, 
+                 data=subset(in.dat, CurrentEnv == "N"),
+                 dist = "loglogistic")
+summary(ll.in.NC)
+
+
+ll.in.FC <- survreg(Surv(Gen, sr) ~ Evolved + Block, 
+                    data=subset(in.dat, CurrentEnv == "F"),
+                    dist = "loglogistic")
+summary(ll.in.FC)
+
+
+```
+
+## Table 2
+
+2x2x2 binomial analysis on generation 1 data
+
+```{r}
+binom.full <- glm(survival ~ Evolved*CurrentEnv + Breeding + as.numeric(Block) + Carcass.weight, data=gen1, family = binomial(link="cloglog"))
+
+summary(binom.full)
+
+tbl_regression(binom.full) %>%
+  as_flex_table() %>% 
+  flextable::save_as_docx(., path = "full_binom.docx")
+```
+
+
+## Table 3
+
+Binomial glms for inbreeding vs outbreeding
+
+```{r}
+## Gen1 -- Inbreeding
+gen1.binom.in <- glm(survival ~ Evolved*CurrentEnv + as.numeric(Block) + Carcass.weight, data=subset(gen1, Breeding=="in"), family = binomial(link="cloglog"))
+
+summary(gen1.binom.in)
+
+## Gen1 -- Outbreeding
+gen1.binom.out <- glm(survival ~ Evolved*CurrentEnv + as.numeric(Block) + Carcass.weight, data=subset(gen1, Breeding=="out"), family = binomial(link="cloglog"))
+
+summary(gen1.binom.out)
+
+## make a table with both regression models 
+tbl.in <- tbl_regression(gen1.binom.in)
+tbl.out <- tbl_regression(gen1.binom.out)
+
+tbl_merge(
+  tbls = list(tbl.in, tbl.out),
+  tab_spanner = c("**Inbred**", "**Outbred**")) %>%
+  as_flex_table() %>% 
+  flextable::save_as_docx(., path = "binomial_tables.docx")
+
+
+## some posthoc stuff for inbred 
+
+gen1.binom.in.NC <- glm(survival ~ Evolved + as.factor(Block) + scale(Carcass.weight), 
+                     data=subset(gen1, Breeding=="in" & CurrentEnv == "N"), 
+                     family="binomial")
+
+
+summary(gen1.binom.in.NC)
+
+
+## Pop diffs within a FC env
+gen1.binom.in.FC <- glm(survival ~ Evolved + as.factor(Block) + scale(Carcass.weight), 
+                     data=subset(gen1, Breeding=="in" & CurrentEnv == "F"), 
+                     family="binomial")
+
+
+summary(gen1.binom.in.FC)
+```
+
+## Figure 2a
+
+inbreeding survival curves
+
+```{r}
+### plotting the model
+fKM <- survfit(Surv(Gen, sr) ~ Cond, data=in.dat)
+sLi <- survreg(Surv(Gen, sr) ~ Cond, data=in.dat, dist = "loglogistic")
+
+pred.NN = data.frame(predict(sLi, newdata=list(Cond="NN"),type="quantile",p=seq(.01,.99,by=.01), se.fit=T))
+pred.NF = data.frame(predict(sLi, newdata=list(Cond="NF"),type="quantile",p=seq(.01,.99,by=.01), se.fit=T))
+pred.FF = data.frame(predict(sLi, newdata=list(Cond="FF"),type="quantile",p=seq(.01,.99,by=.01), se.fit=T))
+pred.FN = data.frame(predict(sLi, newdata=list(Cond="FN"),type="quantile",p=seq(.01,.99,by=.01), se.fit=T))
+
+dfi = data.frame(y=seq(.99,.01,by=-.01), NN=pred.NN, NF=pred.NF, FF=pred.FF, FN=pred.FN)
+df_in = gather(dfi, key= "Cond", value="Gen", -y)
+df_in$Group = substr(df_in$Cond,1,2)
+df_in$type = substr(df_in$Cond,4,nchar(df_in$Cond))
+
+cols = c("#e41a1c", "#e41a1c", "#377eb8", "#377eb8")
+lines = c("solid", "dotted", "dotted", "solid")
+#lines = c("solid", "longdash", "longdash", "solid")
+
+df_in %>% 
+  select(-Cond) %>% 
+  pivot_wider(names_from=type, values_from=Gen) %>% 
+  ggplot(., aes(x=fit, y=y, color=Group, fill=Group)) +
+  geom_ribbon(aes(xmin=fit-se.fit, xmax=fit+se.fit), alpha=0.5, color = NA, ) +
+  geom_line(aes(linetype=Group), size=1) +
+  scale_color_manual(values = cols) +
+  scale_fill_manual(values = c("grey70", "grey70", "grey70", "grey70")) +
+  scale_linetype_manual(values = lines) +
+  theme_classic() +
+  xlim(0.4,8) +
+  ylab("Probability of Survival") +
+  xlab("Generation") +
+  theme(legend.position = "none")
+
+#ggsave("fig2b_loglog.pdf", width = 16, height = 8, units = "cm", device = "pdf")
+```
+
+## Figure 2b
+
+outbreeding survival 
+
+```{r}
+Time <- population <- NULL
+
+data00 <- data0
+
+for(k in 1:8){
+
+pop <- unique(data00$Pop)[k]
+
+G1Pair <- subset(data00, Pop==pop&Gen==1&Breeding=="out")$Pair
+
+
+
+family.list <- list()
+
+for(j in 1:length(G1Pair)){
+
+pair <- list()
+
+pair[[1]] <- G1Pair[j]
+
+for(i in 2:8){
+
+pair[[i]] <- subset(data00, Gen==i&(Male%in%pair[[i-1]]|Female%in%pair[[i-1]])&Pop==pop&Breeding=="out")$Pair
+
+}
+
+family.list[[j]] <- pair
+
+}
+
+
+
+times <- unlist(lapply(lapply(family.list, function(x)lapply(x, length)), function(x)sum(x!=0)))
+
+Time <- c(Time, times)
+
+population <- c(population, rep(pop, length(times)))
+
+}
+
+
+
+data.s.out <- data.frame(Time=Time, Pop=population)
+
+data.s.out$sr <- 1
+
+data.s.out[data.s.out$Time==8, "sr"] <- 0
+
+data.s.out$sTime <- with(data.s.out, Surv(Time, sr))
+
+
+
+data.s.out$Evolved <- substr(data.s.out$Pop, 1, 1)
+
+data.s.out$CurrentEnv <- substr(data.s.out$Pop, 3, 3)
+
+data.s.out$Block <- substr(data.s.out$Pop, 2, 2)
+
+data.s.out$Cond <- as.factor(with(data.s.out, paste0(Evolved, CurrentEnv)))
+
+fits2 <- survfit(sTime  ~ Cond, data=data.s.out)
+
+#summary(fits2)
+
+ggsurvplot(
+  fit = fits2,
+  xlab = "Generation",
+  ylab = "Survival Probability",
+  break.time.by = 1,
+  conf.int = T, 
+  palette=cols,
+  linetype=lines, 
+  size=0.75,
+  legend="bottom",
+  legend.title = "none")
+```
+
+## Figure 3
+
+Binomial survival probabilities for inbred and outbred lineages
+
+```{r, echo = F}
+df.pred <- data.frame(Evolved = c("F", "F", "N", "N"),
+           CurrentEnv = c("F", "N", "F", "N"),
+           Carcass.weight = mean(gen1$Carcass.weight),
+           Block = c(1.5))
+
+in.pred <- cbind(df.pred,
+      data.frame(predict(gen1.binom.in, df.pred, type="response", se.fit =T)))
+
+out.pred <- cbind(df.pred,
+      data.frame(predict(gen1.binom.out, df.pred, type="response", se.fit =T)))
+
+
+all.pred <- rbind(in.pred,out.pred)
+all.pred$Breeding <- c(rep("Inbred",4), rep("Outbred",4))
+
+
+labs <- c(expression(FC['POP']),
+            expression(NC['POP']))
+
+all.pred %>% 
+  mutate(CurrentEnv = paste0(CurrentEnv,"C")) %>% 
+  ggplot(., aes(x=CurrentEnv, y=fit, color=Evolved, group=Evolved)) +
+  geom_point() +
+  geom_pointrange(aes(ymin = fit - se.fit, ymax = fit + se.fit)) +
+  geom_line() +
+  ylim(0,1) +
+  facet_wrap(.~Breeding) +
+  ylab("Survival Probability (Brood Success)") +
+  xlab("Current Environment") +
+  scale_color_manual(values=c("#e41a1c", "#377eb8"), labels = labs) +
+  guides(color=guide_legend("Population")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank())
+
+```
