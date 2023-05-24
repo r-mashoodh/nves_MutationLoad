@@ -1,0 +1,15 @@
+## Metadata
+
+Carcass.weight - weight of carcass provided for each pair to breed on (grams)
+Pair - pair ID 
+Male - male ID
+Female - female ID
+eggs - number of eggs laid
+Larvae - number of larvae alive at dispersal
+Total.weight - brood mass at dispersal. (grams)
+Name - grouping ID (Evolutionary History (N vs F), in vs out-bred, generation number)
+Gen - generation number
+Pop - evolutionary history ID (N vs F), current environment ID (N vs F)
+Cond1 - evolutionary history category (N vs F)
+Cond2 - current environment history category (N vs F)
+Block - block ID (1 vs 2)
