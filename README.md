@@ -5,3 +5,4 @@ This is a repository for the data and code used in the following publication: Pa
 
 1. data0.RData - dataset used for analysis
 2. AnalysisFinalisedwithPlots_Apr6.Rmd - RMarkdown containing R code for all analyses
+3. metadata file - data column descriptions
